@@ -1,0 +1,118 @@
+parameters:
+  - name: productionRelease
+    displayName: Evaluate production security evidence gate
+    type: boolean
+    default: false
+
+trigger:
+  branches:
+    include:
+      - main
+
+pr:
+  branches:
+    include:
+      - main
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  NODE_VERSION: 24.17.0
+  CSP_MODE: enforce
+
+steps:
+  - task: NodeTool@0
+    displayName: Use Node.js
+    inputs:
+      versionSpec: $(NODE_VERSION)
+
+  - script: npm ci
+    displayName: Install locked dependencies
+
+  - script: npm run format:check
+    displayName: Check formatting
+
+  - script: npm run lint
+    displayName: Lint
+
+  - script: npm run typecheck
+    displayName: Type-check
+
+  - script: mkdir -p test-results
+    displayName: Prepare test-results directory
+
+  - script: npm run test -- --reporter=junit --outputFile=test-results/unit-results.xml
+    displayName: Unit and component tests
+
+  - script: npm run test:security
+    displayName: Security policy and request-integrity tests
+
+  - task: PublishTestResults@2
+    condition: always()
+    inputs:
+      testResultsFormat: JUnit
+      testResultsFiles: test-results/unit-results.xml
+      testRunTitle: Frontend unit and component tests
+
+  - script: npm run build
+    displayName: Production build
+
+  - script: npm run storybook:build
+    displayName: Build Storybook
+
+  - script: npm audit --audit-level=high
+    displayName: Audit dependencies
+
+  - script: npm sbom --sbom-format=cyclonedx > $(Build.ArtifactStagingDirectory)/sbom.cdx.json
+    displayName: Generate CycloneDX SBOM
+
+  - publish: $(Build.ArtifactStagingDirectory)/sbom.cdx.json
+    artifact: software-bill-of-materials
+    displayName: Publish SBOM
+
+  # Requires the Microsoft Security DevOps extension to be approved and installed
+  # in the Azure DevOps organization. Findings fail the pipeline by policy.
+  - task: MicrosoftSecurityDevOps@1
+    displayName: Run SAST, secrets, and IaC security analysis
+
+  - script: npx playwright install --with-deps chromium
+    displayName: Install browser for end-to-end tests
+
+  - script: npm run test:e2e
+    displayName: End-to-end tests
+
+  - bash: |
+      npm run start -- --hostname 0.0.0.0 &
+      app_pid=$!
+      trap 'kill $app_pid' EXIT
+      for attempt in {1..30}; do
+        curl --fail --silent http://127.0.0.1:3000/ > /dev/null && break
+        sleep 1
+      done
+      docker run --rm --network host \
+        -v "$(Build.ArtifactStagingDirectory):/zap/wrk:rw" \
+        "$(ZAP_IMAGE)" \
+        zap-baseline.py -t http://127.0.0.1:3000 -J zap-report.json
+    displayName: Run OWASP ZAP baseline DAST
+
+  - publish: $(Build.ArtifactStagingDirectory)/zap-report.json
+    artifact: dast-report
+    condition: always()
+    displayName: Publish DAST report
+
+  - task: PublishTestResults@2
+    condition: always()
+    inputs:
+      testResultsFormat: JUnit
+      testResultsFiles: test-results/e2e-results.xml
+      testRunTitle: Frontend end-to-end tests
+
+  - script: npm run security:release-gate
+    displayName: Verify independent security evidence for production
+    condition: and(succeeded(), eq('${{ parameters.productionRelease }}', 'true'))
+    env:
+      THREAT_MODEL_APPROVAL_ID: $(THREAT_MODEL_APPROVAL_ID)
+      WAF_POLICY_ID: $(WAF_POLICY_ID)
+      DAST_REPORT_ID: $(DAST_REPORT_ID)
+      PENETRATION_TEST_REPORT_ID: $(PENETRATION_TEST_REPORT_ID)

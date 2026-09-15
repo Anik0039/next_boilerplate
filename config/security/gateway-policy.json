@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Vendor-neutral production gateway/WAF control contract",
+  "tls": {
+    "minimumVersion": "1.2",
+    "redirectHttpToHttps": true,
+    "hstsAtEdge": true
+  },
+  "requestControls": {
+    "defaultMaximumBodyBytes": 65536,
+    "cspReportMaximumBodyBytes": 16384,
+    "financialMutationMaximumBodyBytes": 65536,
+    "upstreamTimeoutSeconds": 15,
+    "rejectAmbiguousContentLength": true,
+    "rejectInvalidTransferEncoding": true
+  },
+  "rateLimits": {
+    "csrfTokenPerMinutePerClient": 30,
+    "cspReportsPerMinutePerClient": 60,
+    "financialMutationsPerMinutePerActorAndClient": 10
+  },
+  "financialRequestControls": {
+    "csrfRequired": true,
+    "exactOriginAllowlistRequired": true,
+    "fetchMetadataEnforced": true,
+    "idempotencyRetentionHours": 24,
+    "replayNonceRetentionMinutes": 5,
+    "maximumRequestAgeSeconds": 120
+  },
+  "trustedProxyBoundary": {
+    "stripClientSuppliedIdentityHeaders": true,
+    "stripClientSuppliedForwardingHeaders": true,
+    "injectCanonicalClientAddress": true,
+    "identityHeadersMustComeFromUmsAdapter": true
+  },
+  "waf": {
+    "managedRulesRequired": true,
+    "botAndAnomalyProtectionRequired": true,
+    "logOnlyRolloutBeforeBlocking": true,
+    "securityEventsSentToSiem": true
+  }
+}

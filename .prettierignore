@@ -1,0 +1,7 @@
+.next
+coverage
+node_modules
+playwright-report
+storybook-static
+test-results
+package-lock.json
